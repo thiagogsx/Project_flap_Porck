@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ponte dos Porcos</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.18.0/matter.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #painel {
+            position: fixed;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: linear-gradient(135deg, rgba(0,0,0,0.95), rgba(30,30,30,0.95));
+            color: #fff;
+            padding: 10px 16px;
+            border-radius: 10px;
+            border: 2px solid #4CAF50;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.7);
+            font-family: Arial, sans-serif;
+            z-index: 1000;
+            max-width: 600px;
+            font-size: 13px;
+            backdrop-filter: blur(6px);
+        }
+        button {
+            transition: all 0.3s ease;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.3);
+        }
+        textarea {
+            transition: all 0.3s ease;
+        }
+        textarea:focus {
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div id="sketch-holder"></div>
+    
+    <script>
+        // === CONFIGURAÇÃO MATTER.JS ===
+        const { Engine, World, Bodies, Body, Events } = Matter;
+
+        let motor, mundo;
+        let somSoltarPorco, somPorcoComido;
+
+        // Sprites
+        let imgFundo, imgBase, imgViga, imgPorco, imgTubarao;
+
+        // Estados do jogo
+        let faseAtual = 1; // 1=Planejamento, 2=Construção
+        let planejamentoTexto = "";
+
+        // Elementos do jogo
+        let bases = [];
+        let vigas = [];
+        let porcos = [];
+        let tubaroes = [];
+
+        // Controles de construção
+        let vigaSelecionada = null;
+        let arrastandoViga = false;
+        let offsetMouse = { x: 0, y: 0 };
+        let rotacionandoViga = false;
+        let anguloInicial = 0;
+
+        // Interface
+        let painel;
+
+        function preload() {
+            // Links diretos das imagens hospedadas no FreeImage.host
+            imgFundo = loadImage('https://iili.io/FJMEDyx.png');
+            imgBase = loadImage('https://iili.io/FJMEPC7.png'); 
+            imgViga = loadImage('https://iili.io/FJMEtvj.png');
+            imgPorco = loadImage('https://iili.io/FJMEs4e.png');
+            imgTubarao = loadImage('https://iili.io/FJMEiG9.png');
+        }
+
+        function setup() {
+            let canvas = createCanvas(1200, 800);
+            canvas.parent('sketch-holder');
+            
+            // Criar interface HTML no topo
+            criarInterface();
+            
+            // Configurações de desenho
+            imageMode(CENTER);
+            rectMode(CENTER);
+            
+            // Inicializar física
+            motor = Engine.create();
+            mundo = motor.world;
+            mundo.gravity.y = 0.8; // Física estilo Angry Birds
+            
+            // Chão invisível
+            let chao = Bodies.rectangle(width/2, height + 20, width, 40, { 
+                isStatic: true,
+                render: { visible: false }
+            });
+            World.add(mundo, chao);
+            
+            // Paredes laterais
+            let paredeEsq = Bodies.rectangle(-20, height/2, 40, height, { isStatic: true, render: { visible: false }});
+            let paredeDir = Bodies.rectangle(width + 20, height/2, 40, height, { isStatic: true, render: { visible: false }});
+            World.add(mundo, [paredeEsq, paredeDir]);
+            
+            configurarCenarioBase();
+        }
+
+        function criarInterface() {
+            // Criar div do painel no topo da tela
+            painel = createDiv('');
+            painel.id('painel');
+            painel.style('position', 'fixed');
+            painel.style('top', '10px');
+            painel.style('left', '50%');
+            painel.style('transform', 'translateX(-50%)');
+            painel.style('background', 'linear-gradient(135deg, rgba(0,0,0,0.95), rgba(30,30,30,0.95))');
+            painel.style('color', '#fff');
+            painel.style('padding', '10px 16px');
+            painel.style('border-radius', '10px');
+            painel.style('border', '2px solid #4CAF50');
+            painel.style('box-shadow', '0 4px 12px rgba(0,0,0,0.7)');
+            painel.style('font-family', 'Arial, sans-serif');
+            painel.style('z-index', '1000');
+            painel.style('max-width', '600px');
+            painel.style('font-size', '13px');
+            painel.style('backdrop-filter', 'blur(6px)');
+
+            atualizarInterface();
+        }
+
+        function atualizarInterface() {
+            let conteudo = '';
+            
+            if(faseAtual === 1) {
+                conteudo = `
+                    <div style="display: flex; flex-direction: column; align-items: center; gap: 15px;">
+                        <div style="font-size: 24px; font-weight: bold; color: #4CAF50; text-shadow: 2px 2px 4px rgba(0,0,0,0.8);">
+                            📋 FASE 1: PLANEJAMENTO
+                        </div>
+                        
+                        <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap; justify-content: center;">
+                            <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 10px; border: 1px solid #4CAF50;">
+                                <div style="font-size: 14px; color: #e0e0e0; margin-bottom: 8px;">✍️ Descreva seu plano:</div>
+                                <textarea id="textoPlanejamento" placeholder="Exemplo: 3 vigas horizontais na base, 2 diagonais para suporte..." 
+                                    style="width: 300px; height: 80px; padding: 8px; font-size: 12px; border: 2px solid #4CAF50; border-radius: 6px; background: rgba(255,255,255,0.1); color: white; resize: none; font-family: Arial, sans-serif; box-sizing: border-box;"></textarea>
+                            </div>
+                            
+                            <button onclick="iniciarConstrucao()" style="padding: 12px 20px; font-size: 16px; font-weight: bold; background: linear-gradient(135deg, #4CAF50, #45a049); color: white; border: none; border-radius: 10px; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 8px rgba(0,0,0,0.3); white-space: nowrap;">
+                                🖱️ INICIAR CONSTRUÇÃO
+                            </button>
+                        </div>
+                    </div>
+                `;
+            } else if(faseAtual === 2) {
+                conteudo = `
+                    <div style="display: flex; flex-direction: column; align-items: center; gap: 6px;">
+                        <div style="font-size: 14px; font-weight: bold; color: #4CAF50; text-shadow: 1px 1px 2px rgba(0,0,0,0.4);">
+                            🏗️ FASE 2
+                        </div>
+
+                        <div style="background: rgba(255,255,255,0.07); padding: 4px 8px; border-radius: 6px; border: 1px solid #4CAF50; color: #e0e0e0; max-width: 380px; text-align: center;">
+                            <div style="font-size: 11px; font-weight: bold; color: #81C784; margin-bottom: 2px;">📝 Plano:</div>
+                            <div style="font-size: 10px; white-space: pre-wrap;">${planejamentoTexto}</div>
+                        </div>
+
+                        <div id="contadorPorcos" style="background: rgba(255,255,255,0.03); border: 1px solid #4CAF50; color: #A5D6A7; font-size: 11px; font-weight: bold; padding: 4px 8px; border-radius: 4px;">
+                            🐷 Porcos: 0
+                        </div>
+
+                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center; margin-top: 2px;">
+                            <div style="background: rgba(255,255,255,0.05); padding: 4px 6px; border-radius: 4px; font-size: 10px; color: #e0e0e0;">
+                                🖱️ Arraste • 🔄 Gire • 🎯 Preciso
+                            </div>
+
+                            <div style="background: rgba(255,215,0,0.12); padding: 4px 8px; border-radius: 4px; color: #FFD700; font-weight: bold; font-size: 10px;">
+                                Construindo...
+                            </div>
+
+                            <div style="display: flex; gap: 5px;">
+                                <button onclick="soltarPorco()" style="padding: 5px 10px; font-size: 11px; font-weight: bold; background: linear-gradient(135deg, #4CAF50, #45a049); color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                    🐷 SOLTAR
+                                </button>
+                                <button onclick="voltarPlanejamento()" style="padding: 5px 10px; font-size: 11px; font-weight: bold; background: linear-gradient(135deg, #2196F3, #1976D2); color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                    📋 VOLTAR
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            painel.html(conteudo);
+            
+            // Reaplicar estilos se estivermos na fase 2
+            if (faseAtual === 2 && painel) {
+                painel.style('padding', '10px 16px');
+                painel.style('border-radius', '10px');
+                painel.style('border', '2px solid #4CAF50');
+                painel.style('box-shadow', '0 4px 12px rgba(0,0,0,0.7)');
+                painel.style('max-width', '600px');
+                painel.style('font-size', '13px');
+            }
+        }
+
+        function atualizarContadorPorcos() {
+            const contador = select('#contadorPorcos');
+            if (!contador) return;
+
+            const porcosValidos = new Set();
+
+            // Etapa 1: verificar porcos diretamente sobre vigas
+            porcos.forEach((porco, i) => {
+                for (let viga of vigas) {
+                    const dx = Math.abs(porco.position.x - viga.position.x);
+                    const dy = porco.position.y - viga.position.y;
+                    const velocidade = Math.sqrt(porco.velocity.x ** 2 + porco.velocity.y ** 2);
+
+                    if (dx < 80 && dy > -60 && dy < 50 && velocidade < 2) {
+                        porcosValidos.add(i);
+                        break;
+                    }
+                }
+            });
+
+            // Etapa 2: verificar porcos que estão em cima de outros porcos válidos
+            let mudou;
+            do {
+                mudou = false;
+
+                porcos.forEach((porco, i) => {
+                    if (porcosValidos.has(i)) return;
+
+                    for (let j of porcosValidos) {
+                        const porcoBase = porcos[j];
+                        const dx = Math.abs(porco.position.x - porcoBase.position.x);
+                        const dy = porco.position.y - porcoBase.position.y;
+                        const velocidade = Math.sqrt(porco.velocity.x ** 2 + porco.velocity.y ** 2);
+
+                        if (dx < 40 && dy > -50 && dy < 45 && velocidade < 2) {
+                            porcosValidos.add(i);
+                            mudou = true;
+                            break;
+                        }
+                    }
+                });
+            } while (mudou);
+
+            contador.html(`🐷 Porcos soltos sobre vigas (ou empilhados): ${porcosValidos.size}`);
+        }
+
+        function verificarPesoNasVigas() {
+            const suportePorViga = 1.5; // cada viga sozinha suporta até 1.5 porcos
+
+            for (let viga of vigas) {
+                if (!viga.isStatic) continue;
+
+                // 1. Verificar porcos diretamente sobre a viga
+                let porcosSobre = porcos.filter(p => {
+                    const dx = Math.abs(p.position.x - viga.position.x);
+                    const dy = p.position.y - viga.position.y;
+                    return dx < 75 && dy > -60 && dy < 50; // tolerância vertical e horizontal
+                });
+
+                // 2. Verificar vigas empilhadas diretamente abaixo dela
+                const vigasAbaixo = vigas.filter(v =>
+                    v !== viga &&
+                    Math.abs(v.position.x - viga.position.x) < 10 &&   // alinhadas verticalmente
+                    Math.abs(v.position.y - viga.position.y) < 65 &&   // logo abaixo
+                    v.position.y > viga.position.y &&                  // abaixo, não acima
+                    v.isStatic
+                );
+
+                const capacidade = suportePorViga * (vigasAbaixo.length + 1); // incluindo ela mesma
+
+                if (porcosSobre.length > capacidade) {
+                    Body.setStatic(viga, false); // a viga cai
+                    viga.movivel = false;
+                }
+            }
+        }
+
+        // === CONFIGURAÇÃO DO CENÁRIO ===
+        function configurarCenarioBase() {
+            // Limpar elementos existentes
+            for(let elemento of [...bases, ...vigas, ...porcos, ...tubaroes]) {
+                World.remove(mundo, elemento);
+            }
+            bases = []; vigas = []; porcos = []; tubaroes = [];
+
+            // Criar bases fixas da ponte - POSIÇÕES AJUSTADAS
+            let baseEsquerda = Bodies.rectangle(300, height - 270, 140, 50, { 
+                isStatic: true,
+                friction: 1.0,
+                label: 'base'
+            });
+            let baseDireita = Bodies.rectangle(width - 250, height - 270, 140, 50, { 
+                isStatic: true,
+                friction: 1.0,
+                label: 'base'
+            });
+            
+            bases.push(baseEsquerda, baseDireita);
+            World.add(mundo, bases);
+
+            // Criar tubarões que se movem horizontalmente no lago
+            criarTubaroes();
+        }
+
+        function criarVigas() {
+            let numVigasPorColuna = 8;
+            let espacamento = 30;
+            let baseY = 180;
+            let esquerdaX = 100;
+            let direitaX = width - 100;
+
+            for (let i = 0; i < numVigasPorColuna; i++) {
+                // Viga da coluna da esquerda
+                let vigaE = Bodies.rectangle(esquerdaX, baseY + i * espacamento, 150, 60, {
+                    isStatic: true,
+                    friction: 0.8,
+                    density: 0.003,
+                    label: 'viga'
+                });
+                vigaE.movivel = true;
+                vigas.push(vigaE);
+
+                // Viga da coluna da direita
+                let vigaD = Bodies.rectangle(direitaX, baseY + i * espacamento, 150, 60, {
+                    isStatic: true,
+                    friction: 0.8,
+                    density: 0.003,
+                    label: 'viga'
+                });
+                vigaD.movivel = true;
+                vigas.push(vigaD);
+            }
+
+            World.add(mundo, vigas);
+        }
+
+        function criarTubaroes() {
+            // Tubarões no lago com movimento horizontal
+            let posicoesTubarao = [
+                { x: 300, y: height - 30, direcao: 1 },
+                { x: 600, y: height - 50, direcao: -1 },
+                { x: 900, y: height - 100, direcao: 1 },
+                { x: 450, y: height - 65, direcao: -1 },
+                { x: width / 2, y: height - 200, direcao: 1, limiteCustom: true }
+            ];
+            
+            for (let config of posicoesTubarao) {
+                let tubarao = Bodies.circle(config.x, config.y, 40, {
+                    isStatic: true,
+                    isSensor: true,
+                    label: 'tubarao'
+                });
+
+                tubarao.direcaoMovimento = config.direcao;
+                tubarao.velocidadeBase = random(0.5, 1.2);
+
+                if (config.limiteCustom) {
+                    tubarao.limiteEsquerdo = 400;
+                    tubarao.limiteDireito = width - 400;
+                } else {
+                    tubarao.limiteEsquerdo = 100;
+                    tubarao.limiteDireito = width - 100;
+                }
+
+                tubaroes.push(tubarao);
+            }
+            
+            World.add(mundo, tubaroes);
+        }
+
+        // === LOOP PRINCIPAL ===
+        function draw() {
+            // Desenhar fundo
+            if (imgFundo && imgFundo.width > 1) {
+                image(imgFundo, width / 2, height / 2, width, height);
+            } else {
+                background(135, 206, 235); // Céu azul
+                fill(64, 164, 223); // Água
+                rect(width / 2, height - 75, width, 150);
+            }
+
+            // Atualizar física
+            Engine.update(motor);
+
+            // Atualizar tubarões
+            atualizarTubaroes();
+
+            // Renderizar elementos
+            desenharBases();
+            desenharTubaroes();
+
+            if (faseAtual >= 2) {
+                desenharVigas();
+                desenharPorcos();
+
+                verificarPesoNasVigas();
+
+                // Remover porcos que caíram no mar
+                for (let i = porcos.length - 1; i >= 0; i--) {
+                    const porco = porcos[i];
+                    if (porco.position.y > height - 250) {
+                        World.remove(mundo, porco);
+                        porcos.splice(i, 1);
+                    }
+                }
+                
+                // Remover vigas que caíram no mar
+                for (let i = vigas.length - 1; i >= 0; i--) {
+                    const viga = vigas[i];
+                    if (!viga.isStatic && viga.position.y > height - 250) {
+                        World.remove(mundo, viga);
+                        vigas.splice(i, 1);
+                    }
+                }
+
+                // Atualizar contador em tempo real
+                atualizarContadorPorcos();
+            }
+        }
+
+        // === RENDERIZAÇÃO ===
+        function desenharBases() {
+            for(let base of bases) {
+                push();
+                translate(base.position.x, base.position.y);
+                rotate(base.angle);
+                
+                if(imgBase && imgBase.width > 1) {
+                    image(imgBase, 0, 0, 140, 170);
+                } else {
+                    // Fallback visual
+                    fill(139, 69, 19);
+                    stroke(101, 67, 33);
+                    strokeWeight(3);
+                    rect(0, 0, 140, 50);
+                }
+                
+                pop();
+            }
+        }
+
+        function desenharVigas() {
+            for(let viga of vigas) {
+                push();
+                translate(viga.position.x, viga.position.y);
+                rotate(viga.angle);
+                
+                // Destacar viga selecionada
+                if(viga === vigaSelecionada && faseAtual === 2) {
+                    stroke(255, 255, 0);
+                    strokeWeight(4);
+                    fill(255, 255, 0, 100);
+                    rect(0, 0, 160, 30);
+                }
+                
+                if(imgViga && imgViga.width > 1) {
+                    image(imgViga, 0, 0, 150, 60);
+                } else {
+                    // Fallback visual
+                    fill(218, 165, 32);
+                    stroke(184, 134, 11);
+                    strokeWeight(2);
+                    rect(0, 0, 150, 60);
+                }
+                
+                pop();
+            }
+        }
+
+        function desenharPorcos() {
+            for(let porco of porcos) {
+                push();
+                translate(porco.position.x, porco.position.y);
+                rotate(porco.angle);
+                
+                if(imgPorco && imgPorco.width > 1) {
+                    image(imgPorco, 0, 0, 45, 45);
+                } else {
+                    // Fallback visual
+                    fill(255, 182, 193);
+                    stroke(255, 105, 180);
+                    strokeWeight(2);
+                    ellipse(0, 0, 45, 45);
+                    fill(0);
+                    ellipse(-10, -8, 5, 5);
+                    ellipse(10, -8, 5, 5);
+                }
+                
+                pop();
+            }
+        }
+
+        function desenharTubaroes() {
+            for(let tubarao of tubaroes) {
+                push();
+                translate(tubarao.position.x, tubarao.position.y);
+                
+                if(imgTubarao && imgTubarao.width > 1) {
+                    image(imgTubarao, 0, 0, 150, 150);
+                } else {
+                    // Fallback visual
+                    fill(105, 105, 105);
+                    stroke(64, 64, 64);
+                    strokeWeight(2);
+                    ellipse(0, 0, 80, 60);
+                    triangle(30, 0, 50, -15, 50, 15);
+                }
+                
+                pop();
+            }
+        }
+
+        // === MOVIMENTO DOS TUBARÕES ===
+        function atualizarTubaroes() {
+            for(let tubarao of tubaroes) {
+                let novaX = tubarao.position.x + (tubarao.direcaoMovimento * tubarao.velocidadeBase);
+                
+                // Inverter direção nos limites
+                if(novaX <= tubarao.limiteEsquerdo || novaX >= tubarao.limiteDireito) {
+                    tubarao.direcaoMovimento *= -1;
+                    novaX = constrain(novaX, tubarao.limiteEsquerdo, tubarao.limiteDireito);
+                }
+                
+                Body.setPosition(tubarao, { x: novaX, y: tubarao.position.y });
+            }
+        }
+
+        // === CONTROLES DE MOUSE ===
+        function mousePressed() {
+            if(faseAtual === 2) { // Fase de construção
+                // Verificar se clicou em uma viga
+                for(let viga of vigas) {
+                    let distancia = dist(mouseX, mouseY, viga.position.x, viga.position.y);
+                    if(distancia < 80) {
+                        vigaSelecionada = viga;
+                        arrastandoViga = true;
+                        
+                        // Calcular offset para arrasto suave
+                        offsetMouse.x = mouseX - viga.position.x;
+                        offsetMouse.y = mouseY - viga.position.y;
+                        
+                        // Se clicou nas bordas, entrar em modo rotação
+                        if(distancia > 50) {
+                            rotacionandoViga = true;
+                            anguloInicial = atan2(mouseY - viga.position.y, mouseX - viga.position.x);
+                        }
+                        
+                        break;
+                    }
+                }
+            }
+        }
+
+        function mouseDragged() {
+            if(faseAtual === 2 && vigaSelecionada) {
+                if(rotacionandoViga) {
+                    // Rotacionar viga
+                    let anguloAtual = atan2(mouseY - vigaSelecionada.position.y, mouseX - vigaSelecionada.position.x);
+                    let deltaAngulo = anguloAtual - anguloInicial;
+                    Body.setAngle(vigaSelecionada, vigaSelecionada.angle + deltaAngulo * 0.1);
+                    anguloInicial = anguloAtual;
+                } else if(arrastandoViga) {
+                    // Mover viga livremente pela tela
+                    let novaX = mouseX - offsetMouse.x;
+                    let novaY = mouseY - offsetMouse.y;
+                    
+                    // Limitar dentro da tela (evitando o painel do topo)
+                    novaX = constrain(novaX, 75, width - 75);
+                    novaY = constrain(novaY, 120, height - 75); // Deixar espaço para o painel
+                    
+                    Body.setPosition(vigaSelecionada, { x: novaX, y: novaY });
+                }
+            }
+        }
+
+        function mouseReleased() {
+            vigaSelecionada = null;
+            arrastandoViga = false;
+            rotacionandoViga = false;
+        }
+
+        // === FUNÇÕES GLOBAIS PARA A INTERFACE ===
+        window.iniciarConstrucao = function() {
+            let textoElement = select('#textoPlanejamento');
+            if(textoElement) {
+                planejamentoTexto = textoElement.value();
+            }
+            
+            if(planejamentoTexto.trim().length < 10) {
+                alert('Por favor, descreva seu planejamento com mais detalhes!');
+                return;
+            }
+            
+            faseAtual = 2;
+            atualizarInterface();
+            
+            // Criar vigas para construção
+            criarVigas();
+        }
+
+        window.soltarPorco = function() {
+            let x = random(width/2 - 100, width/2 + 100);
+            let porco = Bodies.circle(x, 50, 22, {
+                restitution: 0.4,
+                friction: 0.6,
+                density: 0.005,
+                label: 'porco'
+            });
+            
+            porcos.push(porco);
+            World.add(mundo, porco);
+            
+            atualizarContadorPorcos();
+        }
+
+        window.voltarPlanejamento = function() {
+            faseAtual = 1;
+            
+            // Limpar construção
+            for(let viga of vigas) {
+                World.remove(mundo, viga);
+            }
+            vigas = [];
+            
+            // Limpar porcos
+            for(let porco of porcos) {
+                World.remove(mundo, porco);
+            }
+            porcos = [];
+            
+            atualizarInterface();
+        }
+
+        window.reiniciarJogo = function() {
+            // Reset completo
+            faseAtual = 1;
+            vigaSelecionada = null;
+            planejamentoTexto = "";
+            
+            // Limpar elementos
+            for(let elemento of [...vigas, ...porcos]) {
+                World.remove(mundo, elemento);
+            }
+            vigas = []; porcos = [];
+            
+            // Resetar tubarões
+            configurarCenarioBase();
+            
+            atualizarInterface();
+        }
+    </script>
+</body>
+</html>
